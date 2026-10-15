@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenStreetMap SafeRoute</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config={
+  theme:{
+    extend:{
+      colors:{
+        osm:{
+          green:'#7EBF37',
+          darkgreen:'#5B9922',
+          blue:'#2E86AB',
+          navy:'#1C3144',
+          sand:'#F2EFE9',
+          border:'#D1CDC4'
+        }
+      }
+    }
+  }
+}
+</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #map { height: 440px; width: 100%; border-radius: 0.5rem; z-index: 10; }
+  .leaflet-control-zoom a { border-radius: 4px !important; color: #333 !important; }
+</style>
+</head>
+<body class="bg-osm-sand text-stone-800 antialiased min-h-screen flex flex-col justify-between">
+
+<!-- Toast Notification -->
+<div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-32 opacity-0 transition-all duration-300 bg-osm-navy text-white px-5 py-3 rounded-lg shadow-xl flex items-center space-x-3 border border-stone-700">
+  <i class="fa-solid fa-circle-check text-osm-green"></i>
+  <span id="toast-message" class="text-sm font-medium">Notification</span>
+</div>
+
+<!-- Navigation Header -->
+<header class="bg-white border-b border-osm-border sticky top-0 z-40 shadow-sm">
+  <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <div class="w-9 h-9 bg-osm-green rounded-md flex items-center justify-center text-white shadow-sm">
+        <i class="fa-solid fa-map-location-dot text-xl"></i>
+      </div>
+      <div>
+        <span class="font-bold text-lg text-osm-navy tracking-tight">OpenStreetMap</span>
+        <span class="text-xs font-semibold px-2 py-0.5 ml-1.5 bg-osm-blue/10 text-osm-blue rounded border border-osm-blue/20 uppercase tracking-wide">SafeRoute</span>
+      </div>
+    </div>
+
+    <nav class="hidden md:flex items-center space-x-6 text-sm font-medium text-stone-600">
+      <a href="#map-section" class="hover:text-osm-blue transition-colors flex items-center space-x-1.5">
+        <i class="fa-solid fa-layer-group text-xs text-osm-green"></i>
+        <span>Route Explorer</span>
+      </a>
+      <a href="#calc-section" class="hover:text-osm-blue transition-colors flex items-center space-x-1.5">
+        <i class="fa-solid fa-sliders text-xs text-osm-blue"></i>
+        <span>Safety Calculator</span>
+      </a>
+      <a href="#hazard-footer" class="hover:text-osm-blue transition-colors flex items-center space-x-1.5">
+        <i class="fa-solid fa-triangle-exclamation text-xs text-amber-600"></i>
+        <span>Report Hazard</span>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<!-- Main Workspace -->
+<main class="max-w-6xl mx-auto px-4 py-8 space-y-8 flex-grow w-full">
+
+  <!-- Interactive Routing & Map Section -->
+  <section id="map-section" class="bg-white rounded-xl shadow-sm border border-osm-border p-5">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-5 pb-3 border-b border-stone-200 gap-4">
+      <div>
+        <h1 class="text-xl font-bold text-osm-navy flex items-center space-x-2">
+          <i class="fa-solid fa-route text-osm-green"></i>
+          <span>Routing Engine</span>
+        </h1>
+        <p class="text-xs text-stone-500 mt-0.5">Select a topological path profile to evaluate real-time ground conditions.</p>
+      </div>
+
+      <!-- Route Selector Switcher -->
+      <div class="inline-flex bg-stone-100 p-1 rounded-lg border border-stone-200 w-full sm:w-auto">
+        <button onclick="switchRoute('standard')" id="btn-standard" class="flex-1 sm:flex-none px-3 py-1.5 text-xs font-semibold rounded-md bg-white text-osm-navy shadow-sm">Scenic Loop</button>
+        <button onclick="switchRoute('ai')" id="btn-ai" class="flex-1 sm:flex-none px-3 py-1.5 text-xs font-semibold rounded-md text-stone-600 hover:text-osm-navy">Hazard Avoidance</button>
+        <button onclick="switchRoute('ridge')" id="btn-ridge" class="flex-1 sm:flex-none px-3 py-1.5 text-xs font-semibold rounded-md text-stone-600 hover:text-osm-navy">Ridgeline Traverse</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div class="lg:col-span-2">
+        <div id="map" class="border border-osm-border shadow-inner"></div>
+      </div>
+
+      <div class="bg-stone-50 rounded-lg p-5 border border-osm-border flex flex-col justify-between space-y-4">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <h2 id="route-title" class="text-base font-bold text-osm-navy">Scenic Loop</h2>
+            <span id="stat-badge" class="px-2 py-0.5 text-[10px] font-mono font-semibold rounded bg-osm-green/15 text-osm-darkgreen border border-osm-green/30">Standard Path</span>
+          </div>
+          <p id="route-desc" class="text-xs text-stone-600 mb-5 leading-relaxed">Conventional trail path with moderate incline and standard drainage profiles.</p>
+          
+          <div class="space-y-2.5 text-xs">
+            <div class="bg-white p-3 rounded-md border border-stone-200 flex justify-between items-center">
+              <span class="text-stone-500 font-mono text-[11px]">DISTANCE</span>
+              <span id="stat-dist" class="font-bold font-mono text-stone-800">8.4 km</span>
+            </div>
+            <div class="bg-white p-3 rounded-md border border-stone-200 flex justify-between items-center">
+              <span class="text-stone-500 font-mono text-[11px]">ELEVATION GAIN</span>
+              <span id="stat-elev" class="font-bold font-mono text-stone-800">420 m</span>
+            </div>
+            <div class="bg-white p-3 rounded-md border border-stone-200 flex justify-between items-center">
+              <span class="text-stone-500 font-mono text-[11px]">SAFETY INDEX</span>
+              <span id="stat-safety" class="font-bold font-mono text-amber-600">74 / 100</span>
+            </div>
+          </div>
+        </div>
+
+        <button onclick="showToast('Live telemetry verified.', 'success')" class="w-full bg-osm-blue hover:bg-sky-700 text-white py-2.5 rounded-md text-xs font-semibold transition-colors flex items-center justify-center space-x-2 shadow-sm">
+          <i class="fa-solid fa-satellite"></i>
+          <span>Verify Route Vector</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Safety Score Calculator Section -->
+  <section id="calc-section" class="bg-white rounded-xl shadow-sm border border-osm-border p-5">
+    <div class="pb-3 mb-5 border-b border-stone-200">
+      <h2 class="text-xl font-bold text-osm-navy flex items-center space-x-2">
+        <i class="fa-solid fa-sliders text-osm-blue"></i>
+        <span>Terrain Safety Score Calculator</span>
+      </h2>
+      <p class="text-xs text-stone-500 mt-0.5">Adjust environmental factors to re-calculate trail passage risk indices.</p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+      <div class="space-y-4 text-xs">
+        <div>
+          <div class="flex justify-between font-medium mb-1">
+            <span class="text-stone-700">Slope Gradient</span>
+            <span id="val-slope" class="font-mono font-bold text-osm-blue">15°</span>
+          </div>
+          <input type="range" id="slider-slope" min="0" max="45" value="15" oninput="updateCalculator()" class="w-full accent-osm-blue cursor-pointer">
+        </div>
+
+        <div>
+          <div class="flex justify-between font-medium mb-1">
+            <span class="text-stone-700">Precipitation (24h)</span>
+            <span id="val-precip" class="font-mono font-bold text-osm-blue">12 mm</span>
+          </div>
+          <input type="range" id="slider-precip" min="0" max="80" value="12" oninput="updateCalculator()" class="w-full accent-osm-blue cursor-pointer">
+        </div>
+
+        <div>
+          <div class="flex justify-between font-medium mb-1 text-stone-700">
+            <span>Substrate Type</span>
+          </div>
+          <select id="select-surface" onchange="updateCalculator()" class="w-full bg-stone-50 border border-stone-200 rounded-md p-2 text-stone-800 font-medium">
+            <option value="1.0">Granite (Low Risk)</option>
+            <option value="1.4" selected>Gravel / Clay (Moderate)</option>
+            <option value="2.2">Mud / Scree (High Risk)</option>
+          </select>
+        </div>
+
+        <div>
+          <div class="flex justify-between font-medium mb-1 text-stone-700">
+            <span>Hiker Experience Profile</span>
+          </div>
+          <select id="select-exp" onchange="updateCalculator()" class="w-full bg-stone-50 border border-stone-200 rounded-md p-2 text-stone-800 font-medium">
+            <option value="0.9">Advanced</option>
+            <option value="1.2" selected>Intermediate</option>
+            <option value="1.8">Novice</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="bg-osm-navy text-white p-6 rounded-lg flex flex-col justify-between space-y-6 shadow-sm border border-stone-800">
+        <div>
+          <span class="text-[10px] font-mono text-osm-green uppercase tracking-wider font-semibold">Calculated Safety Score</span>
+          <div class="flex items-baseline space-x-2 mt-1">
+            <span id="calc-score" class="text-5xl font-extrabold font-mono">82</span>
+            <span class="text-lg text-stone-400 font-mono">/ 100</span>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <div class="w-full bg-stone-800 h-2.5 rounded-full overflow-hidden border border-stone-700">
+            <div id="calc-bar" class="bg-osm-green h-full rounded-full transition-all duration-300" style="width:82%;"></div>
+          </div>
+          <p id="calc-verdict" class="text-xs text-stone-300">Safe passage conditions. Minimal slip risk detected.</p>
+        </div>
+
+        <button onclick="showToast('Risk parameters exported.', 'success')" class="bg-osm-green hover:bg-osm-darkgreen text-white py-2 px-3 rounded-md text-xs font-semibold transition-colors flex items-center justify-center space-x-2">
+          <i class="fa-solid fa-download"></i>
+          <span>Export Score Data</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- OSM Header Style Footer with Hazard Report Component -->
+<footer id="hazard-footer" class="bg-osm-navy text-stone-300 border-t border-stone-800 pt-10 pb-6 mt-12">
+  <div class="max-w-6xl mx-auto px-4 space-y-8">
+
+    <!-- Hazard Report Form -->
+    <div class="bg-stone-800/90 border border-stone-700 rounded-xl p-6 sm:p-8">
+      <div class="max-w-xl mx-auto text-center mb-6">
+        <span class="bg-amber-500/10 text-amber-400 px-3 py-1 rounded text-[10px] font-mono font-semibold uppercase border border-amber-500/20">Crowdsourced Map Updates</span>
+        <h2 class="text-xl font-bold text-white mt-2">Hazard Report</h2>
+        <p class="text-stone-400 text-xs mt-1">Submit active trail obstacles or safety hazards to update map metadata.</p>
+      </div>
+
+      <form onsubmit="submitHazard(event)" class="max-w-lg mx-auto space-y-3.5 text-xs">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block font-medium text-stone-300 mb-1">Hazard Category</label>
+            <select id="hazard-type" class="w-full bg-stone-900 border border-stone-700 rounded-md p-2 text-white">
+              <option value="Washout">Trail Washout</option>
+              <option value="Downed Timber">Downed Timber</option>
+              <option value="Flooding">Flooded Crossing</option>
+              <option value="Rockfall">Rockfall / Scree</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-medium text-stone-300 mb-1">Severity Level</label>
+            <select id="hazard-severity" class="w-full bg-stone-900 border border-stone-700 rounded-md p-2 text-white">
+              <option value="Moderate">Moderate</option>
+              <option value="Severe">Severe (Detour Required)</option>
+              <option value="Critical">Critical Emergency</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-medium text-stone-300 mb-1">Obstacle Details</label>
+          <textarea id="hazard-notes" rows="2" placeholder="Describe exact trail conditions or suggested bypass..." class="w-full bg-stone-900 border border-stone-700 rounded-md p-2 text-white placeholder-stone-500"></textarea>
+        </div>
+
+        <button type="submit" class="w-full bg-osm-green hover:bg-osm-darkgreen text-white py-2.5 rounded-md font-semibold transition-colors flex items-center justify-center space-x-2">
+          <i class="fa-solid fa-paper-plane text-xs"></i>
+          <span>Submit Hazard Telemetry</span>
+        </button>
+      </form>
+    </div>
+
+    <!-- OSM Footer Copyright & Status -->
+    <div class="flex flex-col sm:flex-row justify-between items-center text-xs text-stone-400 pt-4 border-t border-stone-800 space-y-2 sm:space-y-0">
+      <div class="flex items-center space-x-2">
+        <i class="fa-solid fa-earth-americas text-osm-green"></i>
+        <span>&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" class="hover:underline text-stone-300">OpenStreetMap</a> contributors</span>
+      </div>
+      <div class="flex items-center space-x-4">
+        <span class="text-stone-400">Tile Layer: Standard</span>
+        <span class="text-osm-green font-mono text-[11px] flex items-center"><span class="w-2 h-2 rounded-full bg-osm-green inline-block mr-1.5 animate-pulse"></span> Network Active</span>
+      </div>
+    </div>
+
+  </div>
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// Initialize Leaflet Map with OSM Tile Server
+const map = L.map('map', {
+  zoomControl: true
+}).setView([45.3736, -121.6960], 12);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+
+// Route Data Configuration
+const routesData = {
+  standard: {
+    title: "Scenic Loop",
+    desc: "Conventional trail path with moderate incline and standard drainage profiles.",
+    distance: "8.4 km",
+    elevation: "420 m",
+    safety: "74 / 100",
+    badge: "Standard Path",
+    coords: [[45.39, -121.71], [45.38, -121.70], [45.3736, -121.6960], [45.365, -121.685], [45.355, -121.67]],
+    color: "#7EBF37"
+  },
+  ai: {
+    title: "Hazard Avoidance",
+    desc: "Optimized route dynamically bypassing recent washouts and flooded sectors.",
+    distance: "9.8 km",
+    elevation: "490 m",
+    safety: "96 / 100",
+    badge: "Recommended",
+    coords: [[45.39, -121.71], [45.395, -121.69], [45.3736, -121.6960], [45.36, -121.705], [45.355, -121.67]],
+    color: "#2E86AB"
+  },
+  ridge: {
+    title: "Ridgeline Traverse",
+    desc: "Exposed rocky ridge line featuring solid granite footing and high exposure.",
+    distance: "11.2 km",
+    elevation: "780 m",
+    safety: "88 / 100",
+    badge: "Advanced",
+    coords: [[45.39, -121.71], [45.41, -121.68], [45.3736, -121.6960], [45.34, -121.66], [45.355, -121.67]],
+    color: "#D97706"
+  }
+};
+
+let polylineLayer = null;
+
+function switchRoute(type) {
+  const route = routesData[type];
+  
+  document.getElementById('route-title').innerText = route.title;
+  document.getElementById('route-desc').innerText = route.desc;
+  document.getElementById('stat-dist').innerText = route.distance;
+  document.getElementById('stat-elev').innerText = route.elevation;
+  document.getElementById('stat-safety').innerText = route.safety;
+  document.getElementById('stat-badge').innerText = route.badge;
+
+  ['standard', 'ai', 'ridge'].forEach(t => {
+    const btn = document.getElementById(`btn-${t}`);
+    if (t === type) {
+      btn.className = "flex-1 sm:flex-none px-3 py-1.5 text-xs font-semibold rounded-md bg-white text-osm-navy shadow-sm";
+    } else {
+      btn.className = "flex-1 sm:flex-none px-3 py-1.5 text-xs font-semibold rounded-md text-stone-600 hover:text-osm-navy";
+    }
+  });
+
+  if (polylineLayer) map.removeLayer(polylineLayer);
+  
+  polylineLayer = L.polyline(route.coords, {
+    color: route.color,
+    weight: 5,
+    opacity: 0.85
+  }).addTo(map);
+
+  map.fitBounds(polylineLayer.getBounds(), { padding: [40, 40] });
+  showToast(`Active route set to ${route.title}`, 'success');
+}
+
+// Initial active route
+switchRoute('standard');
+
+function updateCalculator() {
+  const slope = parseInt(document.getElementById('slider-slope').value);
+  const precip = parseInt(document.getElementById('slider-precip').value);
+  const surface = parseFloat(document.getElementById('select-surface').value);
+  const exp = parseFloat(document.getElementById('select-exp').value);
+
+  document.getElementById('val-slope').innerText = slope + '°';
+  document.getElementById('val-precip').innerText = precip + ' mm';
+
+  const rawScore = 100 - (slope * 1.2) - (precip * 0.4) - ((surface - 1) * 20) - ((exp - 1) * 15);
+  const finalScore = Math.max(10, Math.min(99, Math.round(rawScore)));
+
+  document.getElementById('calc-score').innerText = finalScore;
+  document.getElementById('calc-bar').style.width = finalScore + '%';
+
+  const verdictEl = document.getElementById('calc-verdict');
+  if (finalScore >= 80) {
+    verdictEl.innerText = "Safe passage conditions. Minimal slip risk detected.";
+    verdictEl.className = "text-xs text-stone-300";
+  } else if (finalScore >= 50) {
+    verdictEl.innerText = "Moderate caution advised. Slippery footing possible.";
+    verdictEl.className = "text-xs text-amber-300";
+  } else {
+    verdictEl.innerText = "High Risk Alert! Severe weather or slope hazards detected.";
+    verdictEl.className = "text-xs text-red-300";
+  }
+}
+
+function submitHazard(e) {
+  e.preventDefault();
+  const notes = document.getElementById('hazard-notes').value;
+  if (!notes.trim()) {
+    showToast('Please provide details regarding the hazard.', 'error');
+    return;
+  }
+  showToast('Hazard reported to OpenStreetMap network.', 'success');
+  e.target.reset();
+}
+
+function showToast(msg, type) {
+  const toast = document.getElementById('toast');
+  const msgEl = document.getElementById('toast-message');
+  const icon = toast.querySelector('i');
+
+  msgEl.innerText = msg;
+  icon.className = type === 'success' ? "fa-solid fa-circle-check text-osm-green" : "fa-solid fa-triangle-exclamation text-amber-400";
+
+  toast.classList.remove('translate-y-32', 'opacity-0');
+  setTimeout(() => toast.classList.add('translate-y-32', 'opacity-0'), 3500);
+}
+</script>
+</body>
+</html>
